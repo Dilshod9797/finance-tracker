@@ -80,11 +80,18 @@
             margin-top: 4px;
         }
 
-        /* Управление отображением */
+        /* Управление отображением и резервным копированием */
         .toolbar {
             display: flex;
-            justify-content: flex-end;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
             margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .toolbar-backup-btns {
+            display: flex;
+            gap: 8px;
         }
 
         /* Список платежей */
@@ -273,9 +280,14 @@
     </div>
 
     <div class="toolbar">
-        <button class="btn-action btn-edit" id="toggleCollapseDailyBtn" onclick="toggleDailyCollapse()" style="background: #34495e;">
+        <button class="btn-action btn-edit" id="toggleCollapseDailyBtn" onclick="toggleDailyCollapse()" style="background: #34495e; padding: 8px 12px;">
             📦 Сложить ежедневные
         </button>
+        <div class="toolbar-backup-btns">
+            <button class="btn-action" onclick="exportDatabase()" style="background: #27ae60; padding: 8px 12px;" title="Сохранить резервную копию на устройство">💾 Экспорт базы</button>
+            <button class="btn-action" onclick="document.getElementById('importFile').click()" style="background: #2980b9; padding: 8px 12px;" title="Восстановить базу из файла">📂 Импорт базы</button>
+            <input type="file" id="importFile" accept=".json" onchange="importDatabase(this)" style="display: none;">
+        </div>
     </div>
 
     <div class="payment-list" id="paymentList"></div>
@@ -368,11 +380,30 @@
         </div>
     </div>
 </div>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
 <script>
+    // Конфигурация Firebase
+    const firebaseConfig = {
+        apiKey: "AIzaSyCidd7SwldpxdZiEt_0QoZ59E_O_V8b_A",
+        authDomain: "my-taxi-tracker.firebaseapp.com",
+        databaseURL: "https://my-taxi-tracker-default-rtdb.firebaseio.com",
+        projectId: "my-taxi-tracker",
+        storageBucket: "my-taxi-tracker.appspot.com",
+        messagingSenderId: "168346669071",
+        appId: "1:168346669071:web:0297b579af95f5431631a5",
+        measurementId: "G-D5Q5YE0Q3C"
+    };
+
+    // Инициализация Firebase
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // Локальные данные
     let payments = JSON.parse(localStorage.getItem('smart_payments_v2')) || [];
     let archive = JSON.parse(localStorage.getItem('smart_archive_v2')) || [];
-    
-    // Статус группировки ежедневных платежей (сохраняется в локальную память)
     let isDailyCollapsed = JSON.parse(localStorage.getItem('daily_collapsed_v2')) || false;
 
     let isDraggingNow = false;
@@ -380,14 +411,75 @@
 
     function makeId() { return Math.random().toString(36).substr(2, 9); }
 
-    // Переключатель сворачивания/разворачивания ежедневных платежей
+    // Функция для автосохранения всех данных в Firebase
+    function saveToFirebase() {
+        if (typeof db !== 'undefined') {
+            db.ref('taxi_tracker_data').set({
+                payments: payments,
+                archive: archive,
+                lastUpdated: new Date().toISOString()
+            }).then(() => {
+                console.log("Данные успешно синхронизированы с облаком Firebase!");
+            }).catch((error) => {
+                console.error("Ошибка синхронизации с Firebase: ", error);
+            });
+        }
+    }
+
+    function exportDatabase() {
+        const backupData = {
+            payments: payments,
+            archive: archive,
+            version: "2.0",
+            exportedAt: new Date().toISOString()
+        };
+        
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+        const downloadAnchor = document.createElement('a');
+        
+        const dateStr = new Date().toISOString().slice(0,10);
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", `financial_tracker_backup_${dateStr}.json`);
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+    }
+
+    function importDatabase(inputElement) {
+        const file = inputElement.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const importedData = JSON.parse(e.target.result);
+                
+                if (importedData && Array.isArray(importedData.payments) && Array.isArray(importedData.archive)) {
+                    if (confirm(`Вы уверены, что хотите восстановить базу?\nТекущие данные на экране будут заменены данными из файла от ${importedData.exportedAt ? fmtDate(importedData.exportedAt) : 'неизвестной даты'}.`)) {
+                        payments = importedData.payments;
+                        archive = importedData.archive;
+                        
+                        localStorage.setItem('smart_payments_v2', JSON.stringify(payments));
+                        localStorage.setItem('smart_archive_v2', JSON.stringify(archive));
+                        
+                        renderList();
+                        saveToFirebase();
+                        alert('🎉 База данных успешно восстановлена!');
+                    }
+                } else {
+                    alert('❌ Ошибка: Выбран некорректный файл резервной копии.');
+                }
+            } catch (err) {
+                alert('❌ Ошибка при чтении файла. Убедитесь, что это правильный JSON файл.');
+            }
+            inputElement.value = ''; 
+        };
+        reader.readAsText(file);
+    }
+
     function toggleDailyCollapse() {
         isDailyCollapsed = !isDailyCollapsed;
         localStorage.setItem('daily_collapsed_v2', JSON.stringify(isDailyCollapsed));
-        const btn = document.getElementById('toggleCollapseDailyBtn');
-        if(btn) {
-            btn.textContent = isDailyCollapsed ? '📖 Разложить ежедневные' : '📦 Сложить ежедневные';
-        }
         renderList();
     }
 
@@ -444,6 +536,7 @@
             archive = [];
             localStorage.setItem('smart_archive_v2', JSON.stringify(archive));
             openArchiveModal();
+            saveToFirebase();
         }
     }
 
@@ -471,6 +564,7 @@
             localStorage.setItem('smart_archive_v2', JSON.stringify(archive));
             saveAndRefresh();
             openArchiveModal(); 
+            saveToFirebase();
         }
     }
 
@@ -532,7 +626,7 @@
                 });
             }
         }
-
+        saveToFirebase();
         saveAndRefresh();
         closeModal('paymentModal');
     });
@@ -630,6 +724,7 @@
                 alert(`🎉 Платёж полностью выполнен и перенесён в архив!`);
             }
         }
+        saveToFirebase();
         saveAndRefresh();
     }
 
@@ -638,6 +733,7 @@
         if(confirm('Удалить этот платёж и всю его историю? (Если это цепочка, следующие платежи в Ближайших тоже удалятся)')) {
             let targetChainId = payments[index].chainId;
             payments = payments.filter((p, i) => i !== index && p.chainId !== targetChainId);
+            saveToFirebase();
             saveAndRefresh();
         }
     }
@@ -646,6 +742,7 @@
         e.stopPropagation();
         if(confirm('Удалить эту запись об оплате? Сумма долга пересчитается.')) {
             payments[itemIdx].history.splice(histIdx, 1);
+            saveToFirebase();
             saveAndRefresh();
         }
     }
@@ -675,18 +772,21 @@
         payments[index].isManuallySet = true;
         if(payments[index].included === undefined) payments[index].included = true;
         payments[index].included = !payments[index].included;
+        saveToFirebase();
         saveAndRefresh(); 
     }
 
     function moveToMain(index, e) {
         e.stopPropagation();
         payments[index].status = 'active';
+        saveToFirebase();
         saveAndRefresh();
     }
 
     function moveToUpcoming(index, e) {
         e.stopPropagation();
         payments[index].status = 'upcoming';
+        saveToFirebase();
         saveAndRefresh();
     }
 
@@ -735,9 +835,7 @@
         });
 
         payments.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
-        localStorage.setItem('smart_payments_v2', JSON.stringify(payments));
 
-        // Временные переменные для создания сложенной группы
         let dailyGroupAmountLeft = 0;
         let dailyGroupTotalAmount = 0;
         let dailyItemsHTML = '';
@@ -761,13 +859,11 @@
             const isIncluded = p.included !== false;
             const isUpcomingMode = p.status === 'upcoming';
 
-            // Если включен режим группировки, элемент активный и это ежедневный повтор
             if (isDailyCollapsed && !isUpcomingMode && p.period === 'Каждый день') {
                 hasActiveDaily = true;
                 dailyGroupAmountLeft += realLeft;
                 dailyGroupTotalAmount += p.totalAmount;
 
-                // Собираем мини-карточки для отображения внутри раскрывающейся папки
                 dailyItemsHTML += `
                     <div class="grouped-daily-item" onclick="event.stopPropagation(); toggleHistory(${idx})">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -790,10 +886,9 @@
                         </div>
                     </div>
                 `;
-                return; // Пропускаем обычный рендер этой карточки на главный экран
+                return; 
             }
 
-            // Обычный рендер для остальных или если группировка выключена
             const card = document.createElement('div');
             card.className = 'payment-item';
             card.setAttribute('id', `card-item-${idx}`);
@@ -860,7 +955,6 @@
             card.setAttribute('draggable', 'false'); 
         });
 
-        // Создаем и выводим сложенную плитку для ежедневных оплат на главный экран
         if (isDailyCollapsed && hasActiveDaily) {
             const groupCard = document.createElement('div');
             groupCard.className = 'payment-item daily-group-card';
@@ -886,7 +980,6 @@
                     </div>
                 </div>
             `;
-            // Вставляем группу в самое начало главного списка
             listEl.insertBefore(groupCard, listEl.firstChild);
         }
 
@@ -979,7 +1072,6 @@
             }
         });
         
-        // Дозаписываем те элементы, которые сейчас скрыты из-за группировки daily
         payments.forEach(p => {
             if(!newPaymentsArray.includes(p)) {
                 newPaymentsArray.push(p);
@@ -1174,9 +1266,31 @@
             }
         }
     }
+    // Функция автоматической загрузки данных из Firebase при старте сайта
+    function loadFromFirebaseAndInit() {
+        if (typeof db !== 'undefined') {
+            db.ref('taxi_tracker_data').once('value').then((snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    payments = data.payments || [];
+                    archive = data.archive || [];
+                    console.log("Данные успешно загружены из облака Firebase!");
+                } else {
+                    console.log("В облаке Firebase пусто, используем локальные данные.");
+                }
+                saveAndRefresh();
+            }).catch((error) => {
+                console.error("Ошибка загрузки из Firebase при старте:", error);
+                renderList();
+            });
+        } else {
+            renderList();
+        }
+    }
 
-    renderList();
-    setInterval(calculateGlobalStatsOnly, 1000);
+    // Запускаем нашу новую умную загрузку:
+    loadFromFirebaseAndInit();
+    setInterval(calculateGlobalStatsOnly, 1000); 
 </script>
 </body>
 </html>
